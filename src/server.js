@@ -11,8 +11,6 @@ const formRoutes = require('./routes/formRoutes');
 
 const app = express();
 
-const cors = require('cors');
-
 app.use(cors({
   origin: 'https://thesis-frontend-ga1u.vercel.app/',
   credentials: true
