@@ -8,6 +8,7 @@ const topicRoutes = require('./routes/topicRoutes');
 const regRoutes = require('./routes/regRoutes');
 const councilRoutes = require('./routes/councilRoutes');
 const formRoutes = require('./routes/formRoutes');
+const { router: notifRoutes } = require('./routes/notificationRoutes');
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/api/registrations', regRoutes);
 app.use('/api/council', councilRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/notifications', notifRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'EduThesis API đang chạy!' });

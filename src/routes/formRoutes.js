@@ -5,6 +5,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const multer     = require('multer');
 const path       = require('path');
 const fs         = require('fs');
+const { createNotification } = require('./notificationRoutes');
 
 // ─── Multer config cho BM08 file upload ───────────────────────────
 // npm install multer
@@ -273,10 +274,10 @@ router.patch('/review/:id', authenticate, requireRole('teacher'), async (req, re
   try {
     const result = await pool.query(
       `UPDATE student_forms SET
-         status           = $1,
-         teacher_comment  = $2,
-         teacher_signature= $3,
-         reviewed_at      = NOW()
+         status            = $1,
+         teacher_comment   = $2,
+         teacher_signature = $3,
+         reviewed_at       = NOW()
        WHERE id = $4
        RETURNING *`,
       [status, teacher_comment, teacher_signature, id]
@@ -285,6 +286,21 @@ router.patch('/review/:id', authenticate, requireRole('teacher'), async (req, re
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy form' });
     }
+
+    // ── Gửi thông báo cho sinh viên ──────────────────────────────
+    const form = result.rows[0];
+
+    const message = status === 'approved'
+      ? `✅ Form ${form.form_type} của bạn đã được duyệt!`
+      : `↩ Form ${form.form_type} bị trả về${teacher_comment ? `: ${teacher_comment}` : ''}`;
+
+    await createNotification(
+      form.student_id,
+      status === 'approved' ? 'form_approved' : 'form_rejected',
+      message,
+      '/my-forms'
+    );
+    // ─────────────────────────────────────────────────────────────
 
     res.json({ message: 'Đã cập nhật biểu mẫu!' });
 
