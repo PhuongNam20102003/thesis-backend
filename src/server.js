@@ -12,8 +12,11 @@ const formRoutes = require('./routes/formRoutes');
 const app = express();
 
 app.use(cors({
-  origin: 'https://thesis-frontend-ga1u.vercel.app/',
-  credentials: true
+  origin: [
+    'https://thesis-frontend-jo5o.vercel.app',  // URL Vercel thật
+    'http://localhost:3000',                      // local dev
+  ],
+  credentials: true,
 }));
 app.use(express.json());
 
