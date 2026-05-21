@@ -1,5 +1,5 @@
 const pool = require('../config/database');
-const { sendApprovedEmail, sendRejectedEmail } = require('../utils/emailService');
+const { sendApprovedEmail, sendRejectedEmail } = require('../utils/emailservice');
 
 // SINH VIÊN ĐĂNG KÝ ĐỀ TÀI
 const registerTopic = async (req, res) => {
