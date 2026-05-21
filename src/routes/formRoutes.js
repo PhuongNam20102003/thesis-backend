@@ -5,7 +5,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const multer     = require('multer');
 const path       = require('path');
 const fs         = require('fs');
-const { createNotification } = require('./Notificationroutes');
+const { createNotification } = require('./notificationRoutes');
 
 // ─── Multer config cho BM08 file upload ───────────────────────────
 // npm install multer
@@ -137,6 +137,25 @@ router.post('/submit', authenticate, requireRole('student'), async (req, res) =>
         [req.user.id, topic_id, 'BM02', JSON.stringify(form_data), student_signature, status, submitted_at]
       );
 
+      // 🔔 Thông báo giảng viên khi sinh viên nộp BM02
+      if (action === 'submit') {
+        const reg = await pool.query(
+          `SELECT t.teacher_id, u.full_name as student_name
+           FROM registrations r
+           JOIN topics t ON r.topic_id = t.id
+           JOIN users u ON r.student_id = u.id
+           WHERE r.student_id = $1 AND r.status = 'approved'`,
+          [req.user.id]
+        );
+        if (reg.rows[0]) {
+          await createNotification(
+            reg.rows[0].teacher_id,
+            'form_submitted',
+            `📋 Sinh viên ${reg.rows[0].student_name} vừa nộp BM02 chờ duyệt`,
+            '/form-submissions'
+          );
+        }
+      }
       return res.json({ message: action === 'submit' ? 'Đã nộp BM02!' : 'Đã lưu nháp!' });
     }
 
@@ -186,6 +205,25 @@ router.post('/submit', authenticate, requireRole('student'), async (req, res) =>
         );
       }
 
+      // 🔔 Thông báo giảng viên khi sinh viên nộp BM04
+      if (action === 'submit') {
+        const reg = await pool.query(
+          `SELECT t.teacher_id, u.full_name as student_name
+           FROM registrations r
+           JOIN topics t ON r.topic_id = t.id
+           JOIN users u ON r.student_id = u.id
+           WHERE r.student_id = $1 AND r.status = 'approved'`,
+          [req.user.id]
+        );
+        if (reg.rows[0]) {
+          await createNotification(
+            reg.rows[0].teacher_id,
+            'form_submitted',
+            `📋 Sinh viên ${reg.rows[0].student_name} vừa nộp BM04 kỳ ${report_index} chờ duyệt`,
+            '/form-submissions'
+          );
+        }
+      }
       return res.json({ message: action === 'submit' ? `Đã nộp kỳ ${report_index}!` : 'Đã lưu nháp!' });
     }
 
@@ -274,10 +312,10 @@ router.patch('/review/:id', authenticate, requireRole('teacher'), async (req, re
   try {
     const result = await pool.query(
       `UPDATE student_forms SET
-         status            = $1,
-         teacher_comment   = $2,
-         teacher_signature = $3,
-         reviewed_at       = NOW()
+         status           = $1,
+         teacher_comment  = $2,
+         teacher_signature= $3,
+         reviewed_at      = NOW()
        WHERE id = $4
        RETURNING *`,
       [status, teacher_comment, teacher_signature, id]
@@ -286,21 +324,6 @@ router.patch('/review/:id', authenticate, requireRole('teacher'), async (req, re
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy form' });
     }
-
-    // ── Gửi thông báo cho sinh viên ──────────────────────────────
-    const form = result.rows[0];
-
-    const message = status === 'approved'
-      ? `✅ Form ${form.form_type} của bạn đã được duyệt!`
-      : `↩ Form ${form.form_type} bị trả về${teacher_comment ? `: ${teacher_comment}` : ''}`;
-
-    await createNotification(
-      form.student_id,
-      status === 'approved' ? 'form_approved' : 'form_rejected',
-      message,
-      '/my-forms'
-    );
-    // ─────────────────────────────────────────────────────────────
 
     res.json({ message: 'Đã cập nhật biểu mẫu!' });
 
@@ -373,46 +396,32 @@ router.get('/detail/:id', authenticate, requireRole('teacher'), async (req, res)
 router.get('/progress/my', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
-      `
-      SELECT
-        t.id AS topic_id,
-        t.title,
-        t.field,
-
-        u.full_name AS supervisor,
-
-        -- chỉ đếm approved
-        COUNT(DISTINCT CASE WHEN r.status = 'approved' THEN r.student_id END)
-        AS actual_students,
-
-        MAX(CASE WHEN sf.form_type = 'BM02' THEN sf.status END) AS bm02,
-
-        CASE
-          WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='approved' THEN 1 END)
-               >= 6
-            THEN 'approved'
-          WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='submitted' THEN 1 END) > 0
-            THEN 'submitted'
-          WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='rejected' THEN 1 END) > 0
-            THEN 'rejected'
-          WHEN COUNT(CASE WHEN sf.form_type='BM04' THEN 1 END) > 0
-            THEN 'draft'
-          ELSE NULL
-        END AS bm04,
-
-        MAX(CASE WHEN sf.form_type = 'BM08' THEN sf.status END) AS bm08
-
-      FROM topics t
-
-      JOIN registrations r
-        ON r.topic_id = t.id
-       AND r.student_id = $1   -- 🔥 FIX: chỉ lấy của student hiện tại
-
-      LEFT JOIN users u ON t.teacher_id = u.id
-      LEFT JOIN student_forms sf ON sf.topic_id = t.id AND sf.student_id = r.student_id
-
-      GROUP BY t.id, t.title, t.field, u.full_name
-      `,
+      `SELECT
+         t.id            AS topic_id,
+         t.code          AS it_code,
+         t.title         AS topic_en,
+         t.title_vn      AS topic_vn,
+         u.full_name     AS supervisor,
+         t.max_students  AS student_count,
+         -- BM02
+         MAX(CASE WHEN sf.form_type = 'BM02' THEN sf.status END) AS bm02,
+         -- BM04: approved nếu TẤT CẢ 6 kỳ approved, submitted nếu có ít nhất 1 kỳ
+         CASE
+           WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='approved' END) = 6 THEN 'approved'
+           WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='submitted' END) > 0 THEN 'submitted'
+           WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='rejected' END) > 0 THEN 'rejected'
+           WHEN COUNT(CASE WHEN sf.form_type='BM04' END) > 0 THEN 'draft'
+           ELSE NULL
+         END AS bm04,
+         -- BM08
+         MAX(CASE WHEN sf.form_type = 'BM08' THEN sf.status END) AS bm08
+       FROM registrations r
+       JOIN topics t ON r.topic_id = t.id
+       JOIN users  u ON t.teacher_id = u.id
+       LEFT JOIN student_forms sf
+         ON sf.topic_id = t.id AND sf.student_id = r.student_id
+       WHERE r.student_id = $1 AND r.status = 'approved'
+       GROUP BY t.id, t.code, t.title, t.title_vn, u.full_name, t.max_students`,
       [req.user.id]
     );
 
@@ -421,110 +430,50 @@ router.get('/progress/my', authenticate, async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+
 // ══════════════════════════════════════════════════════════════════
 // GET /progress/all  — giảng viên / trưởng bộ môn xem tất cả
 // ══════════════════════════════════════════════════════════════════
-router.get('/progress/all', authenticate, async (req, res) => {
-  const userRole = (req.user.role || '').toLowerCase();
-  if (!['teacher', 'head'].includes(userRole)) {
-    return res.status(403).json({ message: 'Không có quyền truy cập' });
-  }
+router.get('/progress/all', authenticate, requireRole('teacher'), async (req, res) => {
   try {
-    const role = (req.user.role || '').toLowerCase();
-    const isHead = role === 'head';
-
-    const params = [];
-
-    let whereClause = `
-      WHERE 1=1
-    `;
-
-    if (!isHead) {
-      whereClause += ` AND t.teacher_id = $1`;
-      params.push(req.user.id);
-    }
+    // Giảng viên chỉ thấy đề tài của mình; head thấy tất cả
+    const isHead = req.user.role === 'head';
 
     const result = await pool.query(
-      `
-      SELECT
-        t.id AS topic_id,
-        t.title,
-        t.field,
-        t.max_students,
-        t.status,
-
-        u_t.full_name AS supervisor,
-
-        COUNT(DISTINCT CASE WHEN r.status = 'approved' THEN r.student_id END)
-        AS actual_students,
-
-        CASE
-  WHEN COUNT(DISTINCT CASE WHEN r.status='approved' THEN r.student_id END)
-       =
-       COUNT(DISTINCT CASE
-         WHEN sf.form_type='BM02'
-          AND sf.status='approved'
-         THEN sf.student_id
-       END)
-  THEN 'approved'
-
-  WHEN COUNT(DISTINCT CASE
-         WHEN sf.form_type='BM02'
-          AND sf.status='submitted'
-         THEN sf.student_id
-       END) > 0
-  THEN 'submitted'
-
-  ELSE NULL
-END AS bm02,
-        CASE
-  WHEN COUNT(CASE WHEN r.status='approved' THEN 1 END) * 6
-       <=
-       COUNT(CASE
-         WHEN sf.form_type='BM04'
-          AND sf.status='approved'
-         THEN 1
-       END)
-  THEN 'approved'
-
-  WHEN COUNT(CASE
-         WHEN sf.form_type='BM04'
-          AND sf.status='submitted'
-         THEN 1
-       END) > 0
-  THEN 'submitted'
-
-  ELSE NULL
-END AS bm04,
-
-        MAX(CASE WHEN sf.form_type = 'BM08' THEN sf.status END) AS bm08
-
-      FROM topics t
-
-      LEFT JOIN registrations r
-        ON r.topic_id = t.id
-
-      LEFT JOIN users u_t
-        ON t.teacher_id = u_t.id
-
-      LEFT JOIN student_forms sf
-        ON sf.topic_id = t.id
-
-      ${whereClause}
-
-      GROUP BY
-        t.id, t.title, t.field, t.max_students, t.status, u_t.full_name
-
-      HAVING COUNT(DISTINCT CASE WHEN r.status = 'approved' THEN r.student_id END) > 0
-
-      ORDER BY t.id ASC
-      `,
-      params
+      `SELECT
+         t.id            AS topic_id,
+         t.code          AS it_code,
+         t.title         AS topic_en,
+         t.title_vn      AS topic_vn,
+         u_t.full_name   AS supervisor,
+         t.max_students  AS student_count,
+         u_s.full_name   AS student_name,
+         u_s.email       AS student_email,
+         MAX(CASE WHEN sf.form_type = 'BM02' THEN sf.status END) AS bm02,
+         CASE
+           WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='approved' END) = 6 THEN 'approved'
+           WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='submitted' END) > 0 THEN 'submitted'
+           WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='rejected' END) > 0 THEN 'rejected'
+           WHEN COUNT(CASE WHEN sf.form_type='BM04' END) > 0 THEN 'draft'
+           ELSE NULL
+         END AS bm04,
+         MAX(CASE WHEN sf.form_type = 'BM08' THEN sf.status END) AS bm08
+       FROM registrations r
+       JOIN topics t        ON r.topic_id   = t.id
+       JOIN users  u_t      ON t.teacher_id = u_t.id
+       JOIN users  u_s      ON r.student_id = u_s.id
+       LEFT JOIN student_forms sf
+         ON sf.topic_id = t.id AND sf.student_id = r.student_id
+       WHERE r.status = 'approved'
+         ${isHead ? '' : 'AND t.teacher_id = $1'}
+       GROUP BY t.id, t.code, t.title, t.title_vn, u_t.full_name,
+                t.max_students, u_s.full_name, u_s.email
+       ORDER BY t.code ASC`,
+      isHead ? [] : [req.user.id]
     );
 
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: err.message });
   }
 });

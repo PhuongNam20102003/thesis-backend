@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { sendApprovedEmail, sendRejectedEmail } = require('../utils/emailservice');
+const { createNotification } = require('../routes/Notificationroutes');
 
 // SINH VIÊN ĐĂNG KÝ ĐỀ TÀI
 const registerTopic = async (req, res) => {
@@ -7,7 +8,6 @@ const registerTopic = async (req, res) => {
   const student_id = req.user.id;
 
   try {
-    // Kiểm tra đã đăng ký chưa (constraint UNIQUE trong DB cũng bắt điều này)
     const existing = await pool.query(
       'SELECT * FROM registrations WHERE student_id = $1',
       [student_id]
@@ -16,13 +16,11 @@ const registerTopic = async (req, res) => {
       return res.status(400).json({ message: 'Bạn đã đăng ký đề tài rồi! Mỗi sinh viên chỉ được đăng ký 1 đề tài.' });
     }
 
-    // Kiểm tra đề tài có tồn tại không
     const topic = await pool.query('SELECT * FROM topics WHERE id = $1', [topic_id]);
     if (topic.rows.length === 0) {
       return res.status(404).json({ message: 'Không tìm thấy đề tài!' });
     }
 
-    // Kiểm tra còn chỗ không
     const approved = await pool.query(
       'SELECT COUNT(*) FROM registrations WHERE topic_id = $1 AND status = $2',
       [topic_id, 'approved']
@@ -31,15 +29,23 @@ const registerTopic = async (req, res) => {
       return res.status(400).json({ message: 'Đề tài này đã đủ số lượng sinh viên!' });
     }
 
-    // Tạo đăng ký
     await pool.query(
       'INSERT INTO registrations (student_id, topic_id) VALUES ($1, $2)',
       [student_id, topic_id]
     );
 
+    // 🔔 Thông báo cho giảng viên: có sinh viên đăng ký đề tài
+    const student = await pool.query('SELECT full_name FROM users WHERE id = $1', [student_id]);
+    await createNotification(
+      topic.rows[0].teacher_id,
+      'form_submitted',
+      `📝 Sinh viên ${student.rows[0]?.full_name} vừa đăng ký đề tài "${topic.rows[0].title}"`,
+      '/pending-regs'
+    );
+
     res.status(201).json({ message: 'Đăng ký thành công! Đang chờ giảng viên xét duyệt.' });
   } catch (err) {
-    if (err.code === '23505') { // lỗi unique constraint
+    if (err.code === '23505') {
       return res.status(400).json({ message: 'Bạn đã đăng ký đề tài rồi!' });
     }
     res.status(500).json({ message: 'Lỗi server', error: err.message });
@@ -64,7 +70,7 @@ const getMyRegistration = async (req, res) => {
   }
 };
 
-// HUỶ ĐĂNG KÝ (sinh viên tự huỷ nếu bị từ chối)
+// HUỶ ĐĂNG KÝ
 const cancelRegistration = async (req, res) => {
   try {
     const reg = await pool.query(
@@ -85,10 +91,9 @@ const cancelRegistration = async (req, res) => {
   }
 };
 
-// GIẢNG VIÊN XEM DANH SÁCH ĐĂNG KÝ CỦA ĐỀ TÀI MÌNH
+// GIẢNG VIÊN XEM DANH SÁCH ĐĂNG KÝ
 const getTopicRegistrations = async (req, res) => {
   try {
-    console.log('Teacher ID:', req.user.id); // thêm dòng này
     const result = await pool.query(
       `SELECT r.*, u.full_name as student_name, u.email as student_email,
               u.student_class, u.gpa, t.title as topic_title, t.id as topic_id
@@ -99,25 +104,22 @@ const getTopicRegistrations = async (req, res) => {
        ORDER BY r.registered_at DESC`,
       [req.user.id]
     );
-    console.log('Result:', result.rows); // thêm dòng này
     res.json(result.rows);
   } catch (err) {
-    console.log('Error:', err.message); // thêm dòng này
     res.status(500).json({ message: 'Lỗi server', error: err.message });
   }
 };
 
-// GIẢNG VIÊN DUYỆT / TỪ CHỐI
+// GIẢNG VIÊN DUYỆT / TỪ CHỐI ĐĂNG KÝ
 const updateRegistrationStatus = async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body; // 'approved' hoặc 'rejected'
+  const { status } = req.body;
 
   if (!['approved', 'rejected'].includes(status)) {
     return res.status(400).json({ message: 'Trạng thái không hợp lệ!' });
   }
 
   try {
-    // Kiểm tra đăng ký này có thuộc đề tài của giảng viên không
     const reg = await pool.query(
       `SELECT r.*, u.full_name as student_name, u.email as student_email,
               t.title as topic_title, tu.full_name as teacher_name
@@ -135,7 +137,6 @@ const updateRegistrationStatus = async (req, res) => {
 
     const registration = reg.rows[0];
 
-    // Nếu duyệt, kiểm tra đề tài còn chỗ không
     if (status === 'approved') {
       const approved = await pool.query(
         'SELECT COUNT(*) FROM registrations WHERE topic_id = $1 AND status = $2',
@@ -147,10 +148,19 @@ const updateRegistrationStatus = async (req, res) => {
       }
     }
 
-    // Cập nhật trạng thái
     await pool.query('UPDATE registrations SET status = $1 WHERE id = $2', [status, id]);
 
-    // Gửi email thông báo (bọc trong try-catch để lỗi email không làm hỏng cả API)
+    // 🔔 Thông báo cho sinh viên: đăng ký được duyệt/từ chối
+    await createNotification(
+      registration.student_id,
+      status === 'approved' ? 'form_approved' : 'form_rejected',
+      status === 'approved'
+        ? `✅ Đăng ký đề tài "${registration.topic_title}" của bạn đã được duyệt!`
+        : `❌ Đăng ký đề tài "${registration.topic_title}" của bạn bị từ chối.`,
+      '/my-registration'
+    );
+
+    // Gửi email
     try {
       if (status === 'approved') {
         await sendApprovedEmail(
@@ -167,7 +177,7 @@ const updateRegistrationStatus = async (req, res) => {
         );
       }
     } catch (emailErr) {
-      console.error('Lỗi gửi email (không ảnh hưởng đến dữ liệu):', emailErr.message);
+      console.error('Lỗi gửi email:', emailErr.message);
     }
 
     res.json({ message: status === 'approved' ? 'Đã duyệt và gửi email thông báo!' : 'Đã từ chối và gửi email thông báo!' });
