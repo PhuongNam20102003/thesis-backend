@@ -8,7 +8,7 @@ const topicRoutes = require('./routes/topicRoutes');
 const regRoutes = require('./routes/regRoutes');
 const councilRoutes = require('./routes/councilRoutes');
 const formRoutes = require('./routes/formRoutes');
-const { router: notifRoutes } = require('./routes/notificationRoutes');
+const { router: notifRoutes } = require('./routes/NotificationRoutes');
 
 const app = express();
 
