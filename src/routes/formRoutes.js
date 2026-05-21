@@ -5,7 +5,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const multer     = require('multer');
 const path       = require('path');
 const fs         = require('fs');
-const { createNotification } = require('./NotificationRoutes');
+const { createNotification } = require('./Notificationroutes');
 
 // ─── Multer config cho BM08 file upload ───────────────────────────
 // npm install multer
