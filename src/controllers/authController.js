@@ -134,5 +134,74 @@ const changePassword = async (req, res) => {
   }
 };
 
+const adminGetUsers = async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, full_name, email, role, student_class, gpa, research_field FROM users ORDER BY id ASC'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Lỗi server', error: err.message });
+  }
+};
+
+// TẠO TÀI KHOẢN (admin)
+const adminCreateUser = async (req, res) => {
+  const { full_name, email, password, role, student_class, gpa, research_field } = req.body;
+  if (!full_name || !email || !password || !role)
+    return res.status(400).json({ message: 'Vui lòng nhập đầy đủ thông tin!' });
+
+  try {
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length > 0)
+      return res.status(400).json({ message: 'Email này đã được đăng ký!' });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      `INSERT INTO users (full_name, email, password, role, student_class, gpa, research_field)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, full_name, email, role`,
+      [full_name, email, hashedPassword, role, student_class || null, gpa || null, research_field || null]
+    );
+    res.status(201).json({ message: 'Tạo tài khoản thành công!', user: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: 'Lỗi server', error: err.message });
+  }
+};
+
+// CẬP NHẬT TÀI KHOẢN (admin)
+const adminUpdateUser = async (req, res) => {
+  const { id } = req.params;
+  const { full_name, email, role, student_class, gpa, research_field } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE users SET full_name=$1, email=$2, role=$3, student_class=$4, gpa=$5, research_field=$6
+       WHERE id=$7 RETURNING id, full_name, email, role, student_class, gpa, research_field`,
+      [full_name, email, role, student_class || null, gpa ? parseFloat(gpa) : null, research_field || null, id]
+    );
+    if (result.rows.length === 0)
+      return res.status(404).json({ message: 'Không tìm thấy user!' });
+    res.json({ message: 'Cập nhật thành công!', user: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: 'Lỗi server', error: err.message });
+  }
+};
+
+// XÓA TÀI KHOẢN (admin)
+const adminDeleteUser = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query('DELETE FROM users WHERE id=$1 RETURNING id', [id]);
+    if (result.rows.length === 0)
+      return res.status(404).json({ message: 'Không tìm thấy user!' });
+    res.json({ message: 'Xóa tài khoản thành công!' });
+  } catch (err) {
+    res.status(500).json({ message: 'Lỗi server', error: err.message });
+  }
+};
+
 // Thêm vào module.exports:
-module.exports = { register, login, getMe, updateProfile, changePassword };
+module.exports = {
+  register, login, getMe, updateProfile, changePassword,
+  adminGetUsers, adminCreateUser, adminUpdateUser, adminDeleteUser,
+};
