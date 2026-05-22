@@ -440,13 +440,7 @@ router.get('/progress/all', authenticate, requireRole('teacher', 'head'), async 
         u_s.email       AS student_email,
         COUNT(DISTINCT r2.student_id) AS actual_students,
         MAX(CASE WHEN sf.form_type = 'BM02' THEN sf.status END) AS bm02,
-        CASE
-          WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='approved' END) = 6 THEN 'approved'
-          WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='submitted' END) > 0 THEN 'submitted'
-          WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='rejected' END) > 0 THEN 'rejected'
-          WHEN COUNT(CASE WHEN sf.form_type='BM04' END) > 0 THEN 'draft'
-          ELSE NULL
-        END AS bm04,
+        MAX(CASE WHEN sf.form_type = 'BM04' THEN sf.status END) AS bm04,
         MAX(CASE WHEN sf.form_type = 'BM08' THEN sf.status END) AS bm08
       FROM registrations r
       JOIN topics t        ON r.topic_id   = t.id
@@ -461,9 +455,14 @@ router.get('/progress/all', authenticate, requireRole('teacher', 'head'), async 
 
     let result;
     if (isHead) {
-      result = await pool.query(baseQuery + ` GROUP BY t.id, t.title, t.field, u_t.full_name, u_s.full_name, u_s.email ORDER BY t.title ASC`);
+      result = await pool.query(
+        baseQuery + ` GROUP BY t.id, t.title, t.field, u_t.full_name, u_s.full_name, u_s.email ORDER BY t.title ASC`
+      );
     } else {
-      result = await pool.query(baseQuery + ` AND t.teacher_id = $1 GROUP BY t.id, t.title, t.field, u_t.full_name, u_s.full_name, u_s.email ORDER BY t.title ASC`, [req.user.id]);
+      result = await pool.query(
+        baseQuery + ` AND t.teacher_id = $1 GROUP BY t.id, t.title, t.field, u_t.full_name, u_s.full_name, u_s.email ORDER BY t.title ASC`,
+        [req.user.id]
+      );
     }
 
     res.json(result.rows);
