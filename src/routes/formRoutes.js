@@ -396,32 +396,26 @@ router.get('/detail/:id', authenticate, requireRole('teacher'), async (req, res)
 router.get('/progress/my', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
-  `SELECT
-     t.id            AS topic_id,
-     t.title,
-     t.field,
-     u.full_name     AS supervisor,
-     COUNT(DISTINCT r2.student_id) AS actual_students,
-     MAX(CASE WHEN sf.form_type = 'BM02' THEN sf.status END) AS bm02,
-     CASE
-       WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='approved' END) = 6 THEN 'approved'
-       WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='submitted' END) > 0 THEN 'submitted'
-       WHEN COUNT(CASE WHEN sf.form_type='BM04' AND sf.status='rejected' END) > 0 THEN 'rejected'
-       WHEN COUNT(CASE WHEN sf.form_type='BM04' END) > 0 THEN 'draft'
-       ELSE NULL
-     END AS bm04,
-     MAX(CASE WHEN sf.form_type = 'BM08' THEN sf.status END) AS bm08
-   FROM registrations r
-   JOIN topics t ON r.topic_id = t.id
-   JOIN users  u ON t.teacher_id = u.id
-   LEFT JOIN student_forms sf
-     ON sf.topic_id = t.id AND sf.student_id = r.student_id
-   LEFT JOIN registrations r2
-     ON r2.topic_id = t.id AND r2.status = 'approved'
-   WHERE r.student_id = $1 AND r.status = 'approved'
-   GROUP BY t.id, t.title, t.field, u.full_name`,
-  [req.user.id]
-);
+      `SELECT
+         t.id          AS topic_id,
+         t.title,
+         t.field,
+         u.full_name   AS supervisor,
+         COUNT(DISTINCT r2.student_id) AS actual_students,
+         MAX(CASE WHEN sf.form_type = 'BM02' THEN sf.status END) AS bm02,
+         MAX(CASE WHEN sf.form_type = 'BM04' THEN sf.status END) AS bm04,
+         MAX(CASE WHEN sf.form_type = 'BM08' THEN sf.status END) AS bm08
+       FROM registrations r
+       JOIN topics t ON r.topic_id = t.id
+       JOIN users  u ON t.teacher_id = u.id
+       LEFT JOIN student_forms sf
+         ON sf.topic_id = t.id AND sf.student_id = r.student_id
+       LEFT JOIN registrations r2
+         ON r2.topic_id = t.id AND r2.status = 'approved'
+       WHERE r.student_id = $1 AND r.status = 'approved'
+       GROUP BY t.id, t.title, t.field, u.full_name`,
+      [req.user.id]
+    );
 
     res.json(result.rows);
   } catch (err) {
